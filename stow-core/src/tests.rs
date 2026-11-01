@@ -220,7 +220,7 @@ fn transforms_invert() {
         }
     }
     assert!(transform::inverse(0, &mut [0; 4]).is_err());
-    assert!(transform::inverse(7, &mut [0; 4]).is_err());
+    assert!(transform::inverse(10, &mut [0; 4]).is_err());
 }
 
 #[test]
@@ -237,6 +237,16 @@ fn xform_roundtrip_and_wins_on_numbers() {
 }
 
 #[test]
+fn accel_wins_on_smooth_signal() {
+    let sine = &numeric_samples()[1];
+    let plain = codec::smallest(sine).1.len();
+    let (id, payload) = codec::smallest(sine);
+    assert_eq!(id, codec::XFORM);
+    assert_eq!(payload[0], transform::ACCEL2);
+    assert!(plain < sine.len() / 2);
+}
+
+#[test]
 fn xform_rejects_bad_payloads() {
     let s = &numeric_samples()[0];
     let (id, payload) = codec::smallest(s);
@@ -244,7 +254,7 @@ fn xform_rejects_bad_payloads() {
     assert_eq!(codec::decode(codec::XFORM, &[], 10).unwrap_err(), Error::Truncated);
     assert_eq!(codec::decode(codec::XFORM, &[1], 10).unwrap_err(), Error::Truncated);
     assert_eq!(codec::decode(codec::XFORM, &[0, codec::STORE, 1], 1).unwrap_err(), Error::UnknownCodec);
-    assert_eq!(codec::decode(codec::XFORM, &[9, codec::STORE, 1], 1).unwrap_err(), Error::UnknownCodec);
+    assert_eq!(codec::decode(codec::XFORM, &[10, codec::STORE, 1], 1).unwrap_err(), Error::UnknownCodec);
     assert_eq!(codec::decode(codec::XFORM, &[1, codec::XFORM, 1], 1).unwrap_err(), Error::UnknownCodec);
     assert!(codec::decode(codec::XFORM, &payload[..payload.len() - 1], s.len()).is_err());
     assert!(codec::decode(codec::XFORM, &payload, s.len() + 1).is_err());

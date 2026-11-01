@@ -173,8 +173,12 @@ inverse transform is applied. The inner codec id must not be 4.
 | 4  | xor1   | `out = cur ^ prev`, 1-byte elements                 |
 | 5  | xor2   | same, 2-byte little-endian elements                 |
 | 6  | xor4   | same, 4-byte little-endian elements                 |
+| 7  | accel1 | `out = cur - 2 * prev + prev2`, 1-byte elements     |
+| 8  | accel2 | same, 2-byte little-endian elements                 |
+| 9  | accel4 | same, 4-byte little-endian elements                 |
 
-`prev` is the previous element of the original data, 0 for the first one.
+`prev` and `prev2` are the previous two elements of the original data, 0 where
+they do not exist.
 Subtraction wraps within the element width. Trailing bytes that do not fill an
 element are left unchanged. A reader must reject an unknown transform id.
 
