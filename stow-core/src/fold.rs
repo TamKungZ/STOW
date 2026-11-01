@@ -152,7 +152,10 @@ pub fn build(input: &[u8]) -> Grammar {
 }
 
 pub fn encode(input: &[u8]) -> Vec<u8> {
-    let g = build(input);
+    encode_grammar(&build(input))
+}
+
+pub fn encode_grammar(g: &Grammar) -> Vec<u8> {
     let mut out = Vec::new();
     varint::put(&mut out, g.rules.len() as u64);
     varint::put(&mut out, g.seq.len() as u64);
@@ -186,30 +189,59 @@ pub fn decode(src: &[u8], raw_len: usize) -> Result<Vec<u8>> {
     }
 
     let symbol_limit = 256 + rule_count as u64;
-    let mut out: Vec<u8> = Vec::with_capacity(raw_len.min(1 << 26));
-    let mut stack: Vec<u32> = Vec::new();
+    let mut ex = Expander::new(rules, raw_len);
     for _ in 0..seq_count {
         let s = varint::get(src, &mut pos)?;
         if s >= symbol_limit {
             return Err(Error::Corrupt);
         }
-        stack.push(s as u32);
-        while let Some(x) = stack.pop() {
-            if x < 256 {
-                if out.len() >= raw_len {
-                    return Err(Error::Corrupt);
-                }
-                out.push(x as u8);
-            } else {
-                let (a, b) = rules[(x - 256) as usize];
-                stack.push(b);
-                stack.push(a);
-            }
+        ex.push(s as u32)?;
+    }
+
+    if pos != src.len() {
+        return Err(Error::Corrupt);
+    }
+    ex.finish()
+}
+
+pub(crate) struct Expander {
+    rules: Vec<(u32, u32)>,
+    raw_len: usize,
+    out: Vec<u8>,
+    stack: Vec<u32>,
+}
+
+impl Expander {
+    pub(crate) fn new(rules: Vec<(u32, u32)>, raw_len: usize) -> Self {
+        Expander {
+            rules,
+            raw_len,
+            out: Vec::with_capacity(raw_len.min(1 << 26)),
+            stack: Vec::new(),
         }
     }
 
-    if pos != src.len() || out.len() != raw_len {
-        return Err(Error::Corrupt);
+    pub(crate) fn push(&mut self, symbol: u32) -> Result<()> {
+        self.stack.push(symbol);
+        while let Some(x) = self.stack.pop() {
+            if x < 256 {
+                if self.out.len() >= self.raw_len {
+                    return Err(Error::Corrupt);
+                }
+                self.out.push(x as u8);
+            } else {
+                let (a, b) = self.rules[(x - 256) as usize];
+                self.stack.push(b);
+                self.stack.push(a);
+            }
+        }
+        Ok(())
     }
-    Ok(out)
+
+    pub(crate) fn finish(self) -> Result<Vec<u8>> {
+        if self.out.len() != self.raw_len {
+            return Err(Error::Corrupt);
+        }
+        Ok(self.out)
+    }
 }

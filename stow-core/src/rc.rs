@@ -2,11 +2,12 @@ use crate::error::{Error, Result};
 
 const TOP: u32 = 1 << 24;
 const ONE: u16 = 1 << 11;
+pub(crate) const HALF: u16 = ONE / 2;
 const BITS: u32 = 11;
 const ADAPT: u32 = 5;
 const MAX_EXPANSION: usize = 64;
 
-struct Encoder {
+pub(crate) struct Encoder {
     low: u64,
     range: u32,
     cache: u8,
@@ -15,7 +16,7 @@ struct Encoder {
 }
 
 impl Encoder {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Encoder { low: 0, range: u32::MAX, cache: 0, cache_size: 1, out: Vec::new() }
     }
 
@@ -53,7 +54,7 @@ impl Encoder {
         }
     }
 
-    fn finish(mut self) -> Vec<u8> {
+    pub(crate) fn finish(mut self) -> Vec<u8> {
         for _ in 0..5 {
             self.shift_low();
         }
@@ -61,7 +62,7 @@ impl Encoder {
     }
 }
 
-struct Decoder<'a> {
+pub(crate) struct Decoder<'a> {
     src: &'a [u8],
     pos: usize,
     range: u32,
@@ -69,7 +70,7 @@ struct Decoder<'a> {
 }
 
 impl<'a> Decoder<'a> {
-    fn new(src: &'a [u8]) -> Self {
+    pub(crate) fn new(src: &'a [u8]) -> Self {
         let mut d = Decoder { src, pos: 0, range: u32::MAX, code: 0 };
         for _ in 0..5 {
             d.code = (d.code << 8) | d.next_byte() as u32;
@@ -104,8 +105,35 @@ impl<'a> Decoder<'a> {
     }
 }
 
+pub(crate) trait BitCoder {
+    fn code(&mut self, p: &mut u16, bit: u32) -> u32;
+}
+
+impl BitCoder for Encoder {
+    fn code(&mut self, p: &mut u16, bit: u32) -> u32 {
+        self.bit(p, bit);
+        bit
+    }
+}
+
+impl BitCoder for Decoder<'_> {
+    fn code(&mut self, p: &mut u16, _bit: u32) -> u32 {
+        self.bit(p)
+    }
+}
+
+impl Decoder<'_> {
+    pub(crate) fn overrun(&self) -> bool {
+        self.pos > self.src.len()
+    }
+
+    pub(crate) fn exhausted(&self) -> bool {
+        self.pos == self.src.len()
+    }
+}
+
 pub fn encode(data: &[u8]) -> Vec<u8> {
-    let mut probs = [ONE / 2; 256];
+    let mut probs = [HALF; 256];
     let mut enc = Encoder::new();
     for &byte in data {
         let mut node = 1usize;
@@ -122,7 +150,7 @@ pub fn decode(src: &[u8], len: usize) -> Result<Vec<u8>> {
     if len > (src.len() + 16).saturating_mul(MAX_EXPANSION) {
         return Err(Error::Corrupt);
     }
-    let mut probs = [ONE / 2; 256];
+    let mut probs = [HALF; 256];
     let mut dec = Decoder::new(src);
     let mut out = Vec::with_capacity(len);
     for _ in 0..len {

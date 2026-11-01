@@ -1,9 +1,11 @@
+mod ac;
 pub mod codec;
 mod container;
 mod crc32;
 mod error;
 pub mod fold;
 pub mod rc;
+pub mod transform;
 pub mod varint;
 
 pub use container::{validate_name, EntryInfo, Reader, Writer};

@@ -72,7 +72,7 @@ fn extract(path: &str, dir: &str) -> Result<(), String> {
 }
 
 fn stats(inputs: &[String]) -> Result<(), String> {
-    println!("{:>12} {:>12} {:>12} {:>12}  {}", "raw", "fold", "fold+rc", "chosen", "file");
+    println!("{:>12} {:>12} {:>12} {:>12} {:>12}  {}", "raw", "fold+rc", "fold+ac", "xform", "chosen", "file");
     for input in inputs {
         let data = fs::read(input).map_err(|e| format!("{}: {}", input, e))?;
         let all = codec::candidates(&data);
@@ -82,15 +82,23 @@ fn stats(inputs: &[String]) -> Result<(), String> {
                 .map(|(_, p)| p.len().to_string())
                 .unwrap_or_else(|| "-".into())
         };
+        let xform = all
+            .iter()
+            .filter(|(i, _)| *i == codec::XFORM)
+            .map(|(_, p)| p.len())
+            .min()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "-".into());
         let (chosen, payload) = codec::smallest(&data);
         println!(
-            "{:>12} {:>12} {:>12} {:>12}  {} ({})",
+            "{:>12} {:>12} {:>12} {:>12} {:>12}  {} ({})",
             data.len(),
-            size(codec::FOLD),
             size(codec::FOLD_RC),
+            size(codec::FOLD_AC),
+            xform,
             payload.len(),
             input,
-            codec::name(chosen)
+            codec::describe(chosen, &payload)
         );
     }
     Ok(())
