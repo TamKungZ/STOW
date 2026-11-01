@@ -8,7 +8,7 @@ chmod 700 "$home"
 export GNUPGHOME=$home
 echo "allow-loopback-pinentry" > "$home/gpg-agent.conf"
 echo "pinentry-mode loopback" > "$home/gpg.conf"
-printf '%s' "${GPG_PASSPHRASE-}" > "$home/passphrase"
+printf '%s' "${GPG_PASSPHRASE-}" | tr -d '\r\n' > "$home/passphrase"
 chmod 600 "$home/passphrase"
 
 printf '%s\n' "$GPG_KEY" | gpg --batch --quiet --import
@@ -22,6 +22,15 @@ if [ -n "${EXPECTED_FPR-}" ]; then
   key_id=$EXPECTED_FPR
 else
   key_id=$(head -n 1 <<< "$fingerprints")
+fi
+
+if ! echo check | gpg --batch --pinentry-mode loopback --passphrase-file "$home/passphrase" \
+  --local-user "$key_id" --clearsign > /dev/null 2> "$home/check.err"; then
+  echo "key $key_id cannot sign: $(tail -n 1 "$home/check.err")" >&2
+  if [ ! -s "$home/passphrase" ]; then
+    echo "GPG_PASSPHRASE is empty or not set" >&2
+  fi
+  exit 1
 fi
 
 if [ -n "${GITHUB_ENV-}" ]; then
