@@ -70,6 +70,17 @@ def build_corpus(dest):
         "<200000h",
         *[int(20000 * math.sin(i * 0.013) + r.randint(-8, 8)) for i in range(200000)],
     )
+    r = random.Random(6)
+    files["scaled_s16.bin"] = struct.pack(
+        "<200000h",
+        *[64 * int(300 * math.sin(i * 0.013) + r.randint(-1, 1)) for i in range(200000)],
+    )
+    r = random.Random(7)
+    price, prices = 100000, []
+    for _ in range(100000):
+        price += 5 * r.randint(-4, 4)
+        prices.append(price)
+    files["prices_u32.bin"] = struct.pack("<%dI" % len(prices), *prices)
     r = random.Random(5)
     lines, t, x = ["id,time,value,count"], 1700000000, 20.0
     for i in range(20000):
