@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+unset EXPECTED_FPR
 scripts=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 work=$(mktemp -d)
 cd "$work"
