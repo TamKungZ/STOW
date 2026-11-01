@@ -1,0 +1,12 @@
+[package]
+name = "stow-ffi"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+
+[lib]
+name = "stow"
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[dependencies]
+stow-core = { path = "../stow-core" }
