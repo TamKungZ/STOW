@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for manifest in stow-core/Cargo.toml stow-ffi/Cargo.toml; do
+            crate=$(sed -n 's/^version = "\(.*\)"/\1/p' "$manifest" | head -n 1)
+            if [ "${version%%-*}" != "$crate" ]; then
+              echo "tag $GITHUB_REF_NAME does not match $manifest version $crate" >&2
+              exit 1
+            fi
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, native: true, deb: true }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm, native: true, deb: true }
+          - { target: aarch64-apple-darwin, os: macos-14, native: true, deb: false }
+          - { target: x86_64-apple-darwin, os: macos-14, native: false, deb: false }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, native: true, deb: false }
+          - { target: aarch64-pc-windows-msvc, os: windows-latest, native: false, deb: false }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - if: matrix.native
+        run: cargo test --workspace --release --target ${{ matrix.target }}
+      - run: cargo build --release -p stow-ffi --target ${{ matrix.target }}
+      - if: matrix.deb
+        run: readelf -d target/${{ matrix.target }}/release/libstow.so | grep -E "NEEDED|SONAME"
+      - shell: bash
+        run: bash .github/scripts/package.sh ${{ matrix.target }} ${{ needs.check.outputs.version }}
+      - if: matrix.deb
+        run: bash .github/scripts/build-deb.sh ${{ matrix.target }} ${{ needs.check.outputs.version }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.deb
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          flags=""
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" ./* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes $flags

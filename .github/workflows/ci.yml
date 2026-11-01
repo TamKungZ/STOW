@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --workspace --release
+
+  c-abi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release -p stow-ffi
+      - run: |
+          gcc -Istow-ffi/include tests/c/roundtrip.c target/release/libstow.a -lpthread -ldl -lm -o roundtrip
+          ./roundtrip
+      - run: |
+          gcc -Istow-ffi/include tests/c/roundtrip.c -Ltarget/release -lstow -o roundtrip-shared
+          ln -s libstow.so target/release/libstow.so.0
+          LD_LIBRARY_PATH=target/release ./roundtrip-shared
+          readelf -d target/release/libstow.so | grep SONAME
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install 1.75 --profile minimal
+      - run: cargo +1.75 test --workspace --release

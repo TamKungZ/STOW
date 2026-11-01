@@ -1,3 +1,4 @@
 target/
 *.sto
 lab/
+dist/
