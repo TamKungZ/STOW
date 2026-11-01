@@ -103,7 +103,7 @@ order-0 context.
 The payload is:
 
 ```
-u8     mode          0 absolute, 1 distance
+u8     mode          bit 0 distance, bit 1 ranked, other bits zero
 varint rule_count
 varint seq_count
 rc stream
@@ -115,8 +115,8 @@ with the grammar semantics of fold. Rule `i` is coded as its left child, then it
 right child. The three streams of symbols (left children, right children, sequence)
 each use their own model, with all probabilities starting at 1024.
 
-In mode 1 a child that is a rule `c >= 256` of rule `i` is coded as the value
-`255 + d` with `d = 256 + i - c`, so `d` is between 1 and `i`. In mode 0 it is
+With bit 0 set a child that is a rule `c >= 256` of rule `i` is coded as the value
+`255 + d` with `d = 256 + i - c`, so `d` is between 1 and `i`. Otherwise it is
 coded as `c`. Literals are coded as their byte value in both modes.
 
 Coding a value `x` under context `ctx`:
@@ -130,12 +130,24 @@ Coding a value `x` under context `ctx`:
    significant first. The first three use a bit tree `top[n][node]`, the rest use
    `low[n][bit position]`.
 
+With bit 1 set the sequence symbols are not coded as above. Let `first(x)` and
+`last(x)` be the first and last byte of the expansion of symbol `x`. For each byte
+`f` the group `f` lists, in increasing symbol order, every symbol `x` with
+`first(x) = f` (the literal `f` and then the rules). A sequence symbol is coded as
+`first(x)` followed by its 1-based position in that group, which is omitted when
+the group has one member. `first(x)` is an 8-level bit tree with probabilities
+selected by `last` of the previous sequence symbol (0 at the start). The position
+`v` is coded like the length and mantissa of the non-ranked scheme, using
+`len[n']` with `n'` the bit length of the group size, and the same `top` and `low`
+trees. A decoded bit length above that of the group size, or `v` above the group
+size, is invalid.
+
 The context is `START = 272` for the first value of a stream. Afterwards it is
 the previous value of the same stream `y` in that stream's coded form: `y` itself
 when `y < 256`, otherwise `256 + min(m - 1, 15)` where `m` is the bit length of
 `y - 255`.
 
-A decoder must reject a mode other than 0 and 1, a distance larger than `i`, a
+A decoder must reject a mode above 3, a distance larger than `i`, a
 symbol at or above `256 + rule_count`, and a stream that overruns or leaves
 bytes unused. The reference decoder also rejects `rule_count` above 2^24 and
 counts above `(stream_len + 16) * 64`.
