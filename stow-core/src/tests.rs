@@ -187,11 +187,11 @@ fn ac_counts_are_bounded() {
 fn ac_modes_roundtrip() {
     for s in samples() {
         let g = fold::build(&s);
-        for mode in [ac::ABSOLUTE, ac::DISTANCE] {
+        for mode in ac::ABSOLUTE..=ac::RANKED | ac::DISTANCE {
             let enc = ac::encode_with(&g, mode);
             assert_eq!(ac::decode(&enc, s.len()).unwrap(), s, "mode {}", mode);
             let mut bad = enc.clone();
-            bad[0] = 2;
+            bad[0] = 4;
             assert_eq!(ac::decode(&bad, s.len()).unwrap_err(), Error::Corrupt);
         }
     }
