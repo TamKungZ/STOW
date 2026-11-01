@@ -14,7 +14,7 @@ esac
 rel="target/${target}/release"
 tilde='~'
 deb_version="${version//-/$tilde}-${revision}"
-maintainer="TamKungZ_ <kittiwut.pimpromma@gmail.com>"
+maintainer="TamKungZ_ <dev@tamkungz.me>"
 homepage="https://github.com/TamKungZ/STOW"
 libdir="usr/lib/${triplet}"
 work=$(mktemp -d)
