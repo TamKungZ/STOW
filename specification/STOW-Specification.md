@@ -103,17 +103,24 @@ order-0 context.
 The payload is:
 
 ```
-u8     mode          bit 0 distance, bit 1 ranked, other bits zero
+u8     mode          bit 0 distance, bit 1 ranked, bit 2 n-ary, other bits zero
 varint rule_count
 varint seq_count
 rc stream
 ```
 
 The rc stream uses the range coder described under rc and must be consumed
-exactly. It carries `rule_count` pairs followed by `seq_count` sequence symbols,
-with the grammar semantics of fold. Rule `i` is coded as its left child, then its
-right child. The three streams of symbols (left children, right children, sequence)
-each use their own model, with all probabilities starting at 1024.
+exactly. It carries `rule_count` rules followed by `seq_count` sequence symbols,
+with the grammar semantics of fold. Rule `i` is coded as its first child, then its
+remaining children. The three streams of symbols (first children, other children,
+sequence) each use their own model, with all probabilities starting at 1024.
+
+With bit 2 set a rule has 2 to 256 children instead of exactly 2, and its child
+count is coded before its children: `c - 1` is coded like the position `v` below
+with bound 255, using `len[p]` where `p` is the bit length of the previous rule's
+`c - 1` capped at 9 (0 for the first rule). The expansion of a rule is the
+concatenation of the expansions of its children, which must all be symbols below
+`256 + i`.
 
 With bit 0 set a child that is a rule `c >= 256` of rule `i` is coded as the value
 `255 + d` with `d = 256 + i - c`, so `d` is between 1 and `i`. Otherwise it is
@@ -147,7 +154,7 @@ the previous value of the same stream `y` in that stream's coded form: `y` itsel
 when `y < 256`, otherwise `256 + min(m - 1, 15)` where `m` is the bit length of
 `y - 255`.
 
-A decoder must reject a mode above 3, a distance larger than `i`, a
+A decoder must reject a mode above 7, a child count above 256, a distance larger than `i`, a
 symbol at or above `256 + rule_count`, and a stream that overruns or leaves
 bytes unused. The reference decoder also rejects `rule_count` above 2^24 and
 counts above `(stream_len + 16) * 64`.

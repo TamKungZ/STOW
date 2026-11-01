@@ -26,6 +26,7 @@ fn samples() -> Vec<Vec<u8>> {
         text,
         lcg_bytes(5000, 1),
         (0..=255u8).cycle().take(4096).collect(),
+        lcg_bytes(1500, 9).repeat(3),
     ]
 }
 
@@ -187,11 +188,11 @@ fn ac_counts_are_bounded() {
 fn ac_modes_roundtrip() {
     for s in samples() {
         let g = fold::build(&s);
-        for mode in ac::ABSOLUTE..=ac::RANKED | ac::DISTANCE {
+        for mode in ac::ABSOLUTE..8 {
             let enc = ac::encode_with(&g, mode);
             assert_eq!(ac::decode(&enc, s.len()).unwrap(), s, "mode {}", mode);
             let mut bad = enc.clone();
-            bad[0] = 4;
+            bad[0] = 8;
             assert_eq!(ac::decode(&bad, s.len()).unwrap_err(), Error::Corrupt);
         }
     }

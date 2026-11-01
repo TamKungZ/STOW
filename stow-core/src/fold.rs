@@ -4,7 +4,6 @@ use std::collections::{BinaryHeap, HashMap};
 
 const NONE: u32 = u32::MAX;
 const DEAD: u32 = u32::MAX;
-const MIN_PAIR_COUNT: u32 = 3;
 const MAX_RULES: usize = 1 << 24;
 
 pub const MAX_INPUT: usize = 1 << 30;
@@ -15,6 +14,7 @@ struct Slot {
     queued: u32,
 }
 
+#[derive(Clone)]
 pub struct Grammar {
     pub rules: Vec<(u32, u32)>,
     pub seq: Vec<u32>,
@@ -43,23 +43,43 @@ fn add_pair(
     a: u32,
     b: u32,
     pos: u32,
+    min_count: u32,
 ) {
     let k = key(a, b);
     let slot = occ.entry(k).or_default();
     slot.pos.push(pos);
     let count = slot.pos.len() as u32;
-    if count >= MIN_PAIR_COUNT {
+    if count >= min_count {
         slot.queued = count;
         heap.push((count, k));
     }
 }
 
+pub const STAGES: [u32; 3] = [4, 3, 2];
+
 pub fn build(input: &[u8]) -> Grammar {
+    build_stages(input, &[3]).pop().expect("one stage")
+}
+
+fn snapshot(seq: &[u32], next: &[u32], rules: &[(u32, u32)]) -> Grammar {
+    let mut out = Vec::new();
+    let mut i = 0u32;
+    while i != NONE {
+        out.push(seq[i as usize]);
+        i = next[i as usize];
+    }
+    Grammar { rules: rules.to_vec(), seq: out }
+}
+
+pub fn build_stages(input: &[u8], stages: &[u32]) -> Vec<Grammar> {
+    let min_count = *stages.last().expect("stages are not empty");
+    let mut pending: Vec<u32> = stages.to_vec();
+    let mut done: Vec<Grammar> = Vec::new();
     let n = input.len();
     let mut seq: Vec<u32> = input.iter().map(|&b| b as u32).collect();
     let mut rules: Vec<(u32, u32)> = Vec::new();
     if n < 2 || n > MAX_INPUT {
-        return Grammar { rules, seq };
+        return stages.iter().map(|_| Grammar { rules: rules.clone(), seq: seq.clone() }).collect();
     }
 
     let mut next: Vec<u32> = (1..=n as u32).collect();
@@ -73,19 +93,23 @@ pub fn build(input: &[u8]) -> Grammar {
     let mut heap: BinaryHeap<(u32, u64)> = BinaryHeap::new();
     for (k, slot) in occ.iter_mut() {
         let count = slot.pos.len() as u32;
-        if count >= MIN_PAIR_COUNT {
+        if count >= min_count {
             slot.queued = count;
             heap.push((count, *k));
         }
     }
 
     while let Some((count, k)) = heap.pop() {
-        if count < MIN_PAIR_COUNT || rules.len() >= MAX_RULES {
+        if count < min_count || rules.len() >= MAX_RULES {
             break;
         }
         match occ.get(&k) {
             Some(slot) if slot.queued == count => {}
             _ => continue,
+        }
+        while pending.len() > 1 && count < pending[0] {
+            done.push(snapshot(&seq, &next, &rules));
+            pending.remove(0);
         }
         let mut list = occ.remove(&k).map(|slot| slot.pos).unwrap_or_default();
         let (a, b) = unkey(k);
@@ -103,7 +127,7 @@ pub fn build(input: &[u8]) -> Grammar {
             consumed = next[p as usize];
         }
 
-        if real < MIN_PAIR_COUNT {
+        if real < min_count {
             if !list.is_empty() {
                 occ.insert(k, Slot { pos: list, queued: 0 });
             }
@@ -134,21 +158,18 @@ pub fn build(input: &[u8]) -> Grammar {
             }
             let before = prev[p as usize];
             if before != NONE {
-                add_pair(&mut occ, &mut heap, seq[before as usize], sym, before);
+                add_pair(&mut occ, &mut heap, seq[before as usize], sym, before, min_count);
             }
             if after != NONE {
-                add_pair(&mut occ, &mut heap, sym, seq[after as usize], p);
+                add_pair(&mut occ, &mut heap, sym, seq[after as usize], p, min_count);
             }
         }
     }
 
-    let mut out = Vec::new();
-    let mut i = 0u32;
-    while i != NONE {
-        out.push(seq[i as usize]);
-        i = next[i as usize];
+    while done.len() < stages.len() {
+        done.push(snapshot(&seq, &next, &rules));
     }
-    Grammar { rules, seq: out }
+    done
 }
 
 pub fn encode(input: &[u8]) -> Vec<u8> {
@@ -189,7 +210,7 @@ pub fn decode(src: &[u8], raw_len: usize) -> Result<Vec<u8>> {
     }
 
     let symbol_limit = 256 + rule_count as u64;
-    let mut ex = Expander::new(rules, raw_len);
+    let mut ex = Expander::from_pairs(&rules, raw_len);
     for _ in 0..seq_count {
         let s = varint::get(src, &mut pos)?;
         if s >= symbol_limit {
@@ -205,20 +226,28 @@ pub fn decode(src: &[u8], raw_len: usize) -> Result<Vec<u8>> {
 }
 
 pub(crate) struct Expander {
-    rules: Vec<(u32, u32)>,
+    start: Vec<usize>,
+    kids: Vec<u32>,
     raw_len: usize,
     out: Vec<u8>,
     stack: Vec<u32>,
 }
 
 impl Expander {
-    pub(crate) fn new(rules: Vec<(u32, u32)>, raw_len: usize) -> Self {
+    pub(crate) fn new(start: Vec<usize>, kids: Vec<u32>, raw_len: usize) -> Self {
         Expander {
-            rules,
+            start,
+            kids,
             raw_len,
             out: Vec::with_capacity(raw_len.min(1 << 26)),
             stack: Vec::new(),
         }
+    }
+
+    fn from_pairs(rules: &[(u32, u32)], raw_len: usize) -> Self {
+        let start = (0..=rules.len()).map(|i| i * 2).collect();
+        let kids = rules.iter().flat_map(|&(a, b)| [a, b]).collect();
+        Self::new(start, kids, raw_len)
     }
 
     pub(crate) fn push(&mut self, symbol: u32) -> Result<()> {
@@ -230,9 +259,10 @@ impl Expander {
                 }
                 self.out.push(x as u8);
             } else {
-                let (a, b) = self.rules[(x - 256) as usize];
-                self.stack.push(b);
-                self.stack.push(a);
+                let r = (x - 256) as usize;
+                for j in (self.start[r]..self.start[r + 1]).rev() {
+                    self.stack.push(self.kids[j]);
+                }
             }
         }
         Ok(())

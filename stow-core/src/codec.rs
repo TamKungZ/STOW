@@ -23,14 +23,21 @@ pub fn name(id: u8) -> &'static str {
 fn plain_candidates(data: &[u8]) -> Vec<(u8, Vec<u8>)> {
     let mut all = vec![(STORE, data.to_vec())];
     if data.len() >= 2 && data.len() <= fold::MAX_INPUT {
-        let grammar = fold::build(data);
-        let folded = fold::encode_grammar(&grammar);
+        let stages = fold::build_stages(data, &fold::STAGES);
+        let folded = fold::encode_grammar(&stages[1]);
         let mut packed = Vec::new();
         varint::put(&mut packed, folded.len() as u64);
         packed.extend_from_slice(&rc::encode(&folded));
         all.push((FOLD, folded));
         all.push((FOLD_RC, packed));
-        all.push((FOLD_AC, ac::encode(&grammar)));
+        let coded = stages
+            .iter()
+            .enumerate()
+            .filter(|(i, g)| *i == 0 || g.rules.len() != stages[i - 1].rules.len())
+            .map(|(_, g)| ac::encode(g))
+            .min_by_key(Vec::len)
+            .expect("at least one stage");
+        all.push((FOLD_AC, coded));
     }
     all
 }
