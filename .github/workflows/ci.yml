@@ -39,3 +39,25 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup toolchain install 1.75 --profile minimal
       - run: cargo +1.75 test --workspace --release
+
+  gpg:
+    runs-on: ubuntu-latest
+    env:
+      EXPECTED_FPR: B64B156379154E5B6C176D0D6157503BFCD109A4
+      HAS_KEY: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Signing flow with a throwaway key
+        run: bash .github/scripts/gpg-selftest.sh
+      - name: Import release signing key
+        if: github.event_name == 'push' && env.HAS_KEY == 'true'
+        env:
+          GPG_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: bash .github/scripts/gpg-setup.sh
+      - name: Sign and verify with the release key
+        if: github.event_name == 'push' && env.HAS_KEY == 'true'
+        run: |
+          echo "signing check" > check.txt
+          bash .github/scripts/gpg-sign.sh check.txt
+          gpg --list-secret-keys --keyid-format long "$GPG_KEY_ID"

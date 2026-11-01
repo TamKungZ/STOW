@@ -63,21 +63,30 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    env:
+      EXPECTED_FPR: B64B156379154E5B6C176D0D6157503BFCD109A4
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: dist-*
           merge-multiple: true
           path: dist
+      - name: Import signing key
+        env:
+          GPG_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: bash .github/scripts/gpg-setup.sh
+      - name: Sign checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          bash ../.github/scripts/gpg-sign.sh SHA256SUMS
+          gpg --armor --export "$GPG_KEY_ID" > signing-key.asc
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cd dist
-          sha256sum * > SHA256SUMS
           flags=""
           case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" ./* \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes $flags
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes $flags
