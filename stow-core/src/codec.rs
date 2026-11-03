@@ -1,11 +1,12 @@
 use crate::error::{Error, Result};
-use crate::{ac, fold, rc, transform, varint};
+use crate::{ac, fold, rc, special, transform, varint};
 
 pub const STORE: u8 = 0;
 pub const FOLD: u8 = 1;
 pub const FOLD_RC: u8 = 2;
 pub const FOLD_AC: u8 = 3;
 pub const XFORM: u8 = 4;
+pub const SPECIAL_BASE: u8 = special::BASE_ID;
 
 const SAMPLE: usize = 64 << 10;
 const WINDOW: usize = 24 << 10;
@@ -17,7 +18,7 @@ pub fn name(id: u8) -> &'static str {
         FOLD_RC => "fold+rc",
         FOLD_AC => "fold+ac",
         XFORM => "xform",
-        _ => "unknown",
+        _ => special::find(id).map_or("unknown", |s| s.name),
     }
 }
 
@@ -43,6 +44,25 @@ fn plain_candidates(data: &[u8]) -> Vec<(u8, Vec<u8>)> {
     all
 }
 
+pub(crate) fn best_plain(data: &[u8]) -> (u8, Vec<u8>) {
+    plain_candidates(data)
+        .into_iter()
+        .min_by_key(|(_, p)| p.len())
+        .expect("store candidate always exists")
+}
+
+fn special_candidates(data: &[u8]) -> Vec<(u8, Vec<u8>)> {
+    let mut out = Vec::new();
+    for s in special::ALL.iter().filter(|s| (s.detect)(data)) {
+        if let Some(payload) = (s.encode)(data) {
+            if (s.decode)(&payload, data.len()).is_ok_and(|back| back == data) {
+                out.push((s.id, payload));
+            }
+        }
+    }
+    out
+}
+
 fn transformed(data: &[u8], transform_id: u8) -> Option<Vec<u8>> {
     if data.len() < 2 {
         return None;
@@ -64,6 +84,7 @@ pub fn candidates(data: &[u8]) -> Vec<(u8, Vec<u8>)> {
             all.push((XFORM, payload));
         }
     }
+    all.extend(special_candidates(data));
     all
 }
 
@@ -142,6 +163,7 @@ pub fn smallest(data: &[u8]) -> (u8, Vec<u8>) {
             all.push((XFORM, payload));
         }
     }
+    all.extend(special_candidates(data));
     let mut best: Option<(u8, Vec<u8>)> = None;
     for (id, payload) in all {
         match &best {
@@ -180,6 +202,9 @@ pub fn decode(id: u8, payload: &[u8], raw_len: usize) -> Result<Vec<u8>> {
             transform::inverse(*t, &mut data)?;
             Ok(data)
         }
-        _ => Err(Error::UnknownCodec),
+        _ => match special::find(id) {
+            Some(s) => (s.decode)(payload, raw_len),
+            None => Err(Error::UnknownCodec),
+        },
     }
 }
