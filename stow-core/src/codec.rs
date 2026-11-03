@@ -8,6 +8,7 @@ pub const FOLD_AC: u8 = 3;
 pub const XFORM: u8 = 4;
 
 const SAMPLE: usize = 64 << 10;
+const WINDOW: usize = 24 << 10;
 
 pub fn name(id: u8) -> &'static str {
     match id {
@@ -82,28 +83,62 @@ fn best_plain_len(data: &[u8]) -> usize {
         .unwrap_or(usize::MAX)
 }
 
-fn transforms_to_try(data: &[u8]) -> Vec<u8> {
+struct Strategy {
+    plain: bool,
+    transform: Option<u8>,
+}
+
+fn sample_of(data: &[u8]) -> Vec<u8> {
+    let middle = (data.len() / 2 - WINDOW / 2) & !3;
+    let tail = (data.len() - WINDOW) & !3;
+    [0, middle, tail]
+        .iter()
+        .flat_map(|&at| data[at..at + WINDOW].iter().copied())
+        .collect()
+}
+
+fn strategy(data: &[u8]) -> Strategy {
     if data.len() <= SAMPLE {
-        return transform::ALL.to_vec();
+        return Strategy { plain: true, transform: None };
     }
-    let sample = &data[..SAMPLE];
-    let mut best_len = best_plain_len(sample);
-    let mut best = Vec::new();
+    let sample = sample_of(data);
+    let plain = best_plain_len(&sample);
+    let mut best: Option<(u8, usize)> = None;
     for &t in &transform::ALL {
-        if let Some(p) = transformed(sample, t) {
-            if p.len() < best_len {
-                best_len = p.len();
-                best = vec![t];
+        if let Some(p) = transformed(&sample, t) {
+            if p.len() < best.map_or(plain, |(_, n)| n) {
+                best = Some((t, p.len()));
             }
         }
     }
-    best
+    let smallest = best.map_or(plain, |(_, n)| n);
+    if smallest / 49 * 50 >= sample.len() {
+        return Strategy { plain: false, transform: None };
+    }
+    match best {
+        Some((t, n)) if n / 10 * 9 < plain => Strategy { plain: false, transform: Some(t) },
+        Some((t, _)) => Strategy { plain: true, transform: Some(t) },
+        None => Strategy { plain: true, transform: None },
+    }
 }
 
 pub fn smallest(data: &[u8]) -> (u8, Vec<u8>) {
-    let mut all = plain_candidates(data);
-    for t in transforms_to_try(data) {
-        if let Some(payload) = transformed(data, t) {
+    let mut all = Vec::new();
+    if data.len() <= SAMPLE {
+        all = plain_candidates(data);
+        for &t in &transform::ALL {
+            if let Some(payload) = transformed(data, t) {
+                all.push((XFORM, payload));
+            }
+        }
+    } else {
+        let plan = strategy(data);
+        if plan.plain {
+            all = plain_candidates(data);
+        } else {
+            all.push((STORE, data.to_vec()));
+        }
+        if let Some(payload) = plan.transform.and_then(|t| transformed(data, t)) {
             all.push((XFORM, payload));
         }
     }

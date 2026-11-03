@@ -264,3 +264,67 @@ fn xform_rejects_bad_payloads() {
         let _ = codec::decode(codec::XFORM, &bad, s.len());
     }
 }
+
+fn large_samples() -> Vec<(&'static str, Vec<u8>)> {
+    let mut text = Vec::new();
+    for i in 0..4000 {
+        text.extend_from_slice(format!("record {} alpha beta gamma delta\n", i % 23).as_bytes());
+    }
+    let ramp: Vec<u8> = (0..60_000u32).flat_map(|i| (i * 3).to_le_bytes()).collect();
+    vec![
+        ("random.bin", lcg_bytes(200_000, 5)),
+        ("text.txt", text),
+        ("ramp.bin", ramp),
+        ("zeros.bin", vec![0; 300_000]),
+    ]
+}
+
+#[test]
+fn large_files_pick_codec_per_file() {
+    let files = large_samples();
+    let mut w = Writer::new();
+    for (name, data) in &files {
+        w.add(name, data).unwrap();
+    }
+    let r = Reader::new(w.finish()).unwrap();
+    for (i, (name, data)) in files.iter().enumerate() {
+        let e = &r.entries()[i];
+        assert_eq!(&e.name, name);
+        assert_eq!(&r.read(i).unwrap(), data);
+        assert!(e.stored_len <= e.raw_len);
+        let alone = codec::smallest(data).0;
+        assert_eq!(e.codec, alone, "{}", name);
+    }
+    assert_eq!(r.entries()[0].codec, codec::STORE);
+    assert!(r.entries()[1].stored_len * 20 < r.entries()[1].raw_len);
+    assert_eq!(r.entries()[2].codec, codec::XFORM);
+    assert!(r.entries()[3].stored_len < 1000);
+}
+
+#[test]
+fn identical_content_under_two_names() {
+    let data = large_samples().remove(1).1;
+    let mut w = Writer::new();
+    w.add("a/one.txt", &data).unwrap();
+    w.add("b/two.txt", &data).unwrap();
+    assert_eq!(w.add("a/one.txt", &data).unwrap_err(), Error::DuplicateName);
+    let r = Reader::new(w.finish()).unwrap();
+    assert_eq!(r.len(), 2);
+    assert_eq!(r.entries()[0].stored_len, r.entries()[1].stored_len);
+    assert_eq!(r.read(0).unwrap(), data);
+    assert_eq!(r.read(1).unwrap(), data);
+}
+
+#[test]
+fn neighbours_do_not_change_an_entry() {
+    let files = large_samples();
+    let mut pair = Writer::new();
+    pair.add("x", &files[1].1).unwrap();
+    pair.add("y", &files[0].1).unwrap();
+    let pair = Reader::new(pair.finish()).unwrap();
+    let mut solo = Writer::new();
+    solo.add("x", &files[1].1).unwrap();
+    let solo = Reader::new(solo.finish()).unwrap();
+    assert_eq!(pair.entries()[0].codec, solo.entries()[0].codec);
+    assert_eq!(pair.entries()[0].stored_len, solo.entries()[0].stored_len);
+}
