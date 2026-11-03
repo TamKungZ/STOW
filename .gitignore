@@ -2,3 +2,4 @@ target/
 *.sto
 lab/
 dist/
+!examplefiles/README.md
