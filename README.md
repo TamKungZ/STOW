@@ -22,6 +22,8 @@ when kept as simple as possible, plus a little arithmetic for numbers.
   factor was tried and gave nothing, so it is not included.
 
 The encoder tries every codec and transform per entry and keeps the smallest.
+Large entries are sampled first, so data that does not compress is stored
+without a full search.
 
 ## Results
 
