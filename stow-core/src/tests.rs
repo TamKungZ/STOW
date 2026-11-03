@@ -328,3 +328,80 @@ fn neighbours_do_not_change_an_entry() {
     assert_eq!(pair.entries()[0].codec, solo.entries()[0].codec);
     assert_eq!(pair.entries()[0].stored_len, solo.entries()[0].stored_len);
 }
+
+fn wav_bytes(channels: u16, bits: u16, frames: usize, tail: &[u8]) -> Vec<u8> {
+    let noise = lcg_bytes(frames * channels as usize, 3);
+    let mut pcm = Vec::new();
+    for f in 0..frames {
+        for c in 0..channels as usize {
+            let v = ((f as f64 * 0.05 * (c + 1) as f64).sin() * 9000.0) as i32 + (noise[f * channels as usize + c] % 7) as i32;
+            if bits == 16 {
+                pcm.extend_from_slice(&(v as i16).to_le_bytes());
+            } else {
+                pcm.push((v / 256 + 128) as u8);
+            }
+        }
+    }
+    let mut out = b"RIFF".to_vec();
+    out.extend_from_slice(&((36 + pcm.len()) as u32).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&channels.to_le_bytes());
+    out.extend_from_slice(&44100u32.to_le_bytes());
+    out.extend_from_slice(&(44100 * channels as u32 * bits as u32 / 8).to_le_bytes());
+    out.extend_from_slice(&(channels * bits / 8).to_le_bytes());
+    out.extend_from_slice(&bits.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(pcm.len() as u32).to_le_bytes());
+    out.extend_from_slice(&pcm);
+    out.extend_from_slice(tail);
+    out
+}
+
+#[test]
+fn wav_specialist_wins_and_roundtrips() {
+    let cases = [
+        wav_bytes(2, 16, 20_000, b""),
+        wav_bytes(1, 16, 9_000, b"LIST   abcd"),
+        wav_bytes(2, 16, 5_001, b"x"),
+        wav_bytes(6, 16, 3_000, b""),
+    ];
+    for wav in cases {
+        let mut w = Writer::new();
+        w.add("a.wav", &wav).unwrap();
+        w.add("b.bin", &lcg_bytes(70_000, 2)).unwrap();
+        let r = Reader::new(w.finish()).unwrap();
+        assert_eq!(r.entries()[0].codec, codec::SPECIAL_BASE);
+        assert_eq!(r.entries()[1].codec, codec::STORE);
+        assert!(r.entries()[0].stored_len * 2 < r.entries()[0].raw_len);
+        assert_eq!(r.read(0).unwrap(), wav);
+    }
+}
+
+#[test]
+fn wav_specialist_skips_unsupported_input() {
+    let eight_bit = wav_bytes(1, 8, 20_000, b"");
+    let mut cut = wav_bytes(2, 16, 20_000, b"");
+    cut.truncate(30);
+    for data in [eight_bit, cut, b"RIFF".to_vec()] {
+        let (id, payload) = codec::smallest(&data);
+        assert!(id < codec::SPECIAL_BASE);
+        assert_eq!(codec::decode(id, &payload, data.len()).unwrap(), data);
+    }
+}
+
+#[test]
+fn wav_specialist_survives_mutation() {
+    let wav = wav_bytes(2, 16, 6_000, b"");
+    let (id, payload) = codec::smallest(&wav);
+    assert_eq!(id, codec::SPECIAL_BASE);
+    for at in (0..payload.len()).step_by(7) {
+        let mut bad = payload.clone();
+        bad[at] ^= 0x55;
+        let _ = codec::decode(id, &bad, wav.len());
+    }
+    for len in 0..payload.len().min(80) {
+        let _ = codec::decode(id, &payload[..len], wav.len());
+    }
+}
