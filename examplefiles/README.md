@@ -1,1 +1,1 @@
-Credit testing file :https://file-examples.com/
+Credit testing file: https://file-examples.com/
