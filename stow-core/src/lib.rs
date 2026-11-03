@@ -5,6 +5,7 @@ mod crc32;
 mod error;
 pub mod fold;
 pub mod rc;
+mod special;
 pub mod transform;
 pub mod varint;
 
