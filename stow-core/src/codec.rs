@@ -9,7 +9,10 @@ pub const XFORM: u8 = 4;
 pub const SPECIAL_BASE: u8 = special::BASE_ID;
 
 const SAMPLE: usize = 64 << 10;
-const WINDOW: usize = 24 << 10;
+const WINDOW: usize = 12 << 10;
+const WINDOWS: usize = 8;
+const LARGE: usize = 4 << 20;
+const PROBE: usize = 1 << 20;
 
 pub fn name(id: u8) -> &'static str {
     match id {
@@ -110,12 +113,22 @@ struct Strategy {
 }
 
 fn sample_of(data: &[u8]) -> Vec<u8> {
-    let middle = (data.len() / 2 - WINDOW / 2) & !3;
-    let tail = (data.len() - WINDOW) & !3;
-    [0, middle, tail]
-        .iter()
-        .flat_map(|&at| data[at..at + WINDOW].iter().copied())
+    let span = data.len() - WINDOW;
+    (0..WINDOWS)
+        .flat_map(|k| {
+            let at = (span / (WINDOWS - 1) * k) & !3;
+            data[at..at + WINDOW].iter().copied()
+        })
         .collect()
+}
+
+fn probe_pays(data: &[u8]) -> bool {
+    if data.len() <= LARGE {
+        return true;
+    }
+    let at = (data.len() / 2 - PROBE / 2) & !3;
+    let probe = &data[at..at + PROBE];
+    best_plain_len(probe) < probe.len() / 100 * 95
 }
 
 fn strategy(data: &[u8]) -> Strategy {
@@ -138,13 +151,23 @@ fn strategy(data: &[u8]) -> Strategy {
     }
     match best {
         Some((t, n)) if n / 10 * 9 < plain => Strategy { plain: false, transform: Some(t) },
-        Some((t, _)) => Strategy { plain: true, transform: Some(t) },
-        None => Strategy { plain: true, transform: None },
+        Some((t, _)) => Strategy { plain: probe_pays(data), transform: Some(t) },
+        None => Strategy { plain: probe_pays(data), transform: None },
     }
 }
 
 pub fn smallest(data: &[u8]) -> (u8, Vec<u8>) {
-    let mut all = Vec::new();
+    let special = special_candidates(data);
+    let decisive = special
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, p))| p.len() / 10 * 9 < data.len())
+        .min_by_key(|(_, (_, p))| p.len())
+        .map(|(i, _)| i);
+    if let Some(i) = decisive {
+        return special.into_iter().nth(i).expect("index from the same list");
+    }
+    let mut all = special;
     if data.len() <= SAMPLE {
         all = plain_candidates(data);
         for &t in &transform::ALL {
@@ -163,7 +186,6 @@ pub fn smallest(data: &[u8]) -> (u8, Vec<u8>) {
             all.push((XFORM, payload));
         }
     }
-    all.extend(special_candidates(data));
     let mut best: Option<(u8, Vec<u8>)> = None;
     for (id, payload) in all {
         match &best {

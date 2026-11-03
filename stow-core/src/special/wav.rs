@@ -2,6 +2,7 @@ use super::{Special, BASE_ID};
 use crate::codec;
 use crate::error::{Error, Result};
 use crate::varint;
+use std::thread;
 
 pub const SPECIAL: Special = Special { id: BASE_ID, name: "wav", detect, encode, decode };
 
@@ -85,11 +86,12 @@ fn best_order(sig: &[i16], range: std::ops::Range<usize>) -> u8 {
         .expect("orders are not empty")
 }
 
-fn put_stream(out: &mut Vec<u8>, data: &[u8]) {
+fn stream(data: &[u8]) -> Vec<u8> {
     let (id, payload) = codec::best_plain(data);
-    out.push(id);
-    varint::put(out, payload.len() as u64);
+    let mut out = vec![id];
+    varint::put(&mut out, payload.len() as u64);
     out.extend_from_slice(&payload);
+    out
 }
 
 fn take<'a>(payload: &'a [u8], pos: &mut usize, len: usize) -> Result<&'a [u8]> {
@@ -159,10 +161,15 @@ fn encode(data: &[u8]) -> Option<Vec<u8>> {
     out.extend_from_slice(&data[pcm_end..]);
     varint::put(&mut out, frames as u64);
     out.push(channels as u8);
-    put_stream(&mut out, &orders);
-    for c in 0..channels {
-        put_stream(&mut out, &low[c]);
-        put_stream(&mut out, &high[c]);
+    let planes: Vec<&[u8]> = std::iter::once(orders.as_slice())
+        .chain((0..channels).flat_map(|c| [low[c].as_slice(), high[c].as_slice()]))
+        .collect();
+    let streams: Vec<Vec<u8>> = thread::scope(|scope| {
+        let handles: Vec<_> = planes.iter().map(|&p| scope.spawn(move || stream(p))).collect();
+        handles.into_iter().map(|h| h.join().expect("stream encoder panicked")).collect()
+    });
+    for s in streams {
+        out.extend_from_slice(&s);
     }
     Some(out)
 }

@@ -2,6 +2,11 @@ use crate::codec;
 use crate::crc32::crc32;
 use crate::error::{Error, Result};
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::thread;
+
+const MAX_THREADS: usize = 4;
 
 const MAGIC: [u8; 4] = *b"STOW";
 const VERSION: u8 = 1;
@@ -46,14 +51,38 @@ impl Writer {
         Ok(())
     }
 
+    fn encode_all(&self) -> Vec<(u8, Vec<u8>)> {
+        let mut order: Vec<usize> = (0..self.entries.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(self.entries[i].1.len()));
+        let workers = thread::available_parallelism().map_or(1, |n| n.get()).min(MAX_THREADS);
+        let next = AtomicUsize::new(0);
+        let done = Mutex::new(vec![None; self.entries.len()]);
+        thread::scope(|scope| {
+            for _ in 0..workers.min(order.len()) {
+                scope.spawn(|| loop {
+                    let slot = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(&i) = order.get(slot) else { break };
+                    let encoded = codec::smallest(&self.entries[i].1);
+                    done.lock().expect("encoder thread panicked")[i] = Some(encoded);
+                });
+            }
+        });
+        done.into_inner()
+            .expect("encoder thread panicked")
+            .into_iter()
+            .map(|e| e.expect("every entry is encoded"))
+            .collect()
+    }
+
     pub fn finish(&self) -> Vec<u8> {
+        let mut encoded = self.encode_all().into_iter();
         let mut out = Vec::new();
         out.extend_from_slice(&MAGIC);
         out.push(VERSION);
         out.push(0);
         out.extend_from_slice(&(self.entries.len() as u32).to_le_bytes());
         for (name, data) in &self.entries {
-            let (id, payload) = codec::smallest(data);
+            let (id, payload) = encoded.next().expect("one result per entry");
             out.extend_from_slice(&(name.len() as u16).to_le_bytes());
             out.extend_from_slice(name.as_bytes());
             out.push(id);
